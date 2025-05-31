@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>彈珠台動畫（無門）</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+    }
+    canvas {
+      display: block;
+      background: #222;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="pinballCanvas"></canvas>
+  <script>
+    const canvas = document.getElementById('pinballCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const gravity = 0.3;
+    const conveyorHeight = 60;
+    const conveyorWidth = 40;
+    const obstacles = [];
+    const balls = [];
+    let startTime;
+
+    class Ball {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 8;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = 0;
+        this.state = 'falling';
+      }
+
+      update(dt) {
+        if (this.state === 'falling') {
+          this.vy += gravity;
+          this.x += this.vx;
+          this.y += this.vy;
+
+          for (const obs of obstacles) {
+            obs.checkCollision(this, dt);
+          }
+
+          if (this.y + this.radius > canvas.height - conveyorHeight) {
+            this.state = 'bottomConveyor';
+            this.y = canvas.height - conveyorHeight - this.radius;
+            this.vx = 2;
+            this.vy = 0;
+          }
+        } else if (this.state === 'bottomConveyor') {
+          this.x += this.vx;
+          if (this.x + this.radius > canvas.width - conveyorWidth) {
+            this.state = 'rightConveyor';
+            this.x = canvas.width - conveyorWidth / 2;
+            this.vx = 0;
+            this.vy = -2;
+          }
+        } else if (this.state === 'rightConveyor') {
+          this.y += this.vy;
+          if (this.y - this.radius < 0) this.reset();
+        }
+      }
+
+      reset() {
+        this.x = canvas.width / 2 + (Math.random() - 0.5) * 100;
+        this.y = 0;
+        this.vx = (Math.random() - 0.5) * 2;
+        this.vy = 0;
+        this.state = 'falling';
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'gold';
+        ctx.fill();
+      }
+    }
+
+    class Obstacle {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+      update(dt) {}
+      draw() {}
+      checkCollision(ball, dt) {}
+    }
+
+    class Gear extends Obstacle {
+      constructor(x, y, radius) {
+        super(x, y);
+        this.radius = radius;
+        this.angle = 0;
+        this.angularSpeed = 0.002 + Math.random() * 0.003;
+      }
+      update(dt) {
+        this.angle += this.angularSpeed * dt;
+      }
+      draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'crimson';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#770000';
+        for (let i = 0; i < 10; i++) {
+          ctx.rotate((Math.PI * 2) / 10);
+          ctx.beginPath();
+          ctx.moveTo(this.radius, 0);
+          ctx.lineTo(this.radius + 10, 0);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      checkCollision(ball) {
+        const dx = ball.x - this.x;
+        const dy = ball.y - this.y;
+        const dist = Math.hypot(dx, dy);
+        const collisionRadius = this.radius + 6;
+        if (dist < ball.radius + collisionRadius) {
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const dot = ball.vx * nx + ball.vy * ny;
+          ball.vx = ball.vx - 2 * dot * nx;
+          ball.vy = ball.vy - 2 * dot * ny;
+          const overlap = ball.radius + collisionRadius - dist;
+          ball.x += nx * overlap;
+          ball.y += ny * overlap;
+        }
+      }
+    }
+
+    class Shape extends Obstacle {
+      constructor(x, y, type, size) {
+        super(x, y);
+        this.type = type;
+        this.size = size;
+      }
+      draw() {
+        ctx.fillStyle = 'teal';
+        if (this.type === 'rect') {
+          ctx.fillRect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+        } else if (this.type === 'tri') {
+          ctx.beginPath();
+          ctx.moveTo(this.x, this.y - this.size/2);
+          ctx.lineTo(this.x - this.size/2, this.y + this.size/2);
+          ctx.lineTo(this.x + this.size/2, this.y + this.size/2);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+      checkCollision(ball) {
+        const dx = ball.x - this.x;
+        const dy = ball.y - this.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < this.size / 1.5 + ball.radius) {
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const dot = ball.vx * nx + ball.vy * ny;
+          ball.vx = ball.vx - 2 * dot * nx;
+          ball.vy = ball.vy - 2 * dot * ny;
+          const overlap = ball.radius + this.size / 1.5 - dist;
+          ball.x += nx * overlap;
+          ball.y += ny * overlap;
+        }
+      }
+    }
+
+    function createObstacles() {
+      obstacles.length = 0;
+      const spacingX = 60;
+      const spacingY = 60;
+      for (let y = 100; y < canvas.height - conveyorHeight - 50; y += spacingY) {
+        const shift = ((y / spacingY) % 2 === 0) ? 0 : spacingX / 2;
+        for (let x = 0; x < canvas.width - conveyorWidth; x += spacingX) {
+          const rand = Math.random();
+          const px = x + shift;
+          if (rand < 0.5) {
+            obstacles.push(new Gear(px, y, 16));
+          } else {
+            const type = Math.random() < 0.5 ? 'rect' : 'tri';
+            obstacles.push(new Shape(px, y, type, 20));
+          }
+        }
+      }
+    }
+
+    function createBalls(n) {
+      balls.length = 0;
+      for (let i = 0; i < n; i++) {
+        const x = canvas.width / 2 + (Math.random() - 0.5) * 100;
+        balls.push(new Ball(x, 0));
+      }
+    }
+
+    function drawConveyors() {
+      ctx.fillStyle = '#444';
+      ctx.fillRect(0, canvas.height - conveyorHeight, canvas.width, conveyorHeight);
+      ctx.fillRect(canvas.width - conveyorWidth, 0, conveyorWidth, canvas.height);
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 2;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, canvas.height - conveyorHeight);
+        ctx.lineTo(x + 20, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(canvas.width - conveyorWidth, y);
+        ctx.lineTo(canvas.width, y + 20);
+        ctx.stroke();
+      }
+    }
+
+    function animate(timestamp) {
+      if (!startTime) startTime = timestamp;
+      const elapsed = (timestamp - startTime) / 1000;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawConveyors();
+      for (const obs of obstacles) {
+        obs.update(elapsed);
+        obs.draw();
+      }
+      for (const ball of balls) {
+        for (const obs of obstacles) {
+          obs.checkCollision(ball, elapsed);
+        }
+        ball.update(elapsed);
+        ball.draw();
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      createObstacles();
+      createBalls(10);
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
